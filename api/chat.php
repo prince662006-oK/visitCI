@@ -15,10 +15,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // ── CONFIG ──────────────────────────────────────────────────
 define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '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');
 define('GROQ_MODEL',   'llama-3.3-70b-versatile');
-define('DB_HOST',      getenv('DB_HOST') ?: 'localhost');
-define('DB_NAME',      getenv('DB_NAME') ?: 'n8n');
+define('DB_HOST',      getenv('DB_HOST') ?: 'mysql-oykn.railway.internal');
+define('DB_NAME',      getenv('DB_NAME') ?: 'railway');
 define('DB_USER',      getenv('DB_USER') ?: 'root');
-define('DB_PASS',      getenv('DB_PASS') ?: '');
+define('DB_PASS',      getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
 define('MAX_HISTORY',  10);   // nb de messages gardés en mémoire
 define('MAX_RESULTS',  6);    // nb max de lieux retournés par la BDD
 
