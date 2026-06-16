@@ -1,7 +1,11 @@
 <?php
 define('TELEGRAM_TOKEN', getenv('TELEGRAM_TOKEN') ?: '8948292036:AAHCOShkRZBXRIWWaGAvZTkim5Cguay_BAQ');
 define('GROQ_API_KEY',   getenv('GROQ_API_KEY')   ?: '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');
-define('APP_URL', getenv('APP_URL') ?: 'https://visitci.free.je');
+$scheme = (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+    ? 'https'
+    : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
+
+define('APP_URL', getenv('APP_URL') ?: $scheme.'://'.($_SERVER['HTTP_HOST'] ?? 'visitci-production.up.railway.app'));
 define('LOG_FILE', __DIR__ . '/webhook.log');
 
 function logWebhook($message) {
@@ -19,7 +23,7 @@ function logWebhook($message) {
 
 // ── LIRE php://input UNE SEULE FOIS ──
 $rawInput = file_get_contents('php://input');
-logWebhook('Webhook reçu - Method: '.$_SERVER['REQUEST_METHOD'].' - Size: '.strlen($rawInput).' bytes');
+logWebhook('Webhook reçu - Method: '.$_SERVER['REQUEST_METHOD'].' - Size: '.strlen($rawInput).' bytes - APP_URL: '.APP_URL);
 
 ignore_user_abort(true);
 
@@ -73,7 +77,8 @@ function callChatAPI(string $message, int $chatId): string {
         CURLOPT_POSTFIELDS     => $payload,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
         CURLOPT_TIMEOUT        => 20,
-        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
     ]);
     $res  = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -102,7 +107,8 @@ function sendTelegram(int $chatId, string $text): void {
         CURLOPT_POSTFIELDS     => $payload,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
         CURLOPT_TIMEOUT        => 10,
-        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
     ]);
     $res = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
