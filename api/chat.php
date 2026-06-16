@@ -15,12 +15,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // ── CONFIG ──────────────────────────────────────────────────
 define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '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');
 define('GROQ_MODEL',   'llama-3.3-70b-versatile');
-define('DB_HOST',      getenv('MYSQLHOST')     ?: 'switchyard.proxy.rlwy.net');
-define('DB_NAME',      getenv('MYSQLDATABASE') ?: 'railway');
-define('DB_USER',      getenv('MYSQLUSER')     ?: 'root');
-define('DB_PASS',      getenv('MYSQLPASSWORD') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
-define('DB_PORT',      getenv('MYSQLPORT')     ?: 24576'); // Optionnel mais conseillé sur Railway
-
+define('DB_HOST',      getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net');
+define('DB_NAME',      getenv('DB_NAME') ?: 'railway');
+define('DB_USER',      getenv('DB_USER') ?: 'root');
+define('DB_PASS',      getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
 define('MAX_HISTORY',  10);   // nb de messages gardés en mémoire
 define('MAX_RESULTS',  6);    // nb max de lieux retournés par la BDD
 
@@ -41,7 +39,7 @@ $sessionId   = $body['session_id'] ?? session_id();
 function getDB(): ?PDO {
     try {
         $pdo = new PDO(
-            'mysql:host='.DB_HOST.';port='.DB_PORT.';dbname='.DB_NAME.';charset=utf8mb4',
+            'mysql:host='.DB_HOST.';dbname='.DB_NAME.';charset=utf8mb4',
             DB_USER, DB_PASS,
             [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
              PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
