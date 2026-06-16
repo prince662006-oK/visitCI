@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // ── CONFIG ──────────────────────────────────────────────────
 define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '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');
 define('GROQ_MODEL',   'llama-3.3-70b-versatile');
-define('DB_HOST',      getenv('DB_HOST') ?: '');
+define('DB_HOST',      getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net');
 define('DB_PORT',      getenv('DB_PORT') ?: '24576'); // Ajout du port spécifié dans votre commande
 define('DB_NAME',      getenv('DB_NAME') ?: 'railway');
 define('DB_USER',      getenv('DB_USER') ?: 'root');
