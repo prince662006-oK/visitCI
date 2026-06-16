@@ -1,66 +1,82 @@
 <?php
+// ============================================================
+//  telegram/webhook.php — Bot Telegram VisitCI (corrigé)
+// ============================================================
 define('TELEGRAM_TOKEN', getenv('TELEGRAM_TOKEN') ?: '8948292036:AAHCOShkRZBXRIWWaGAvZTkim5Cguay_BAQ');
-define('GROQ_API_KEY',   getenv('GROQ_API_KEY')   ?: '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');
+
+// APP_URL : priorité à la variable d'env Railway
 $scheme = (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
     ? 'https'
     : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
+define('APP_URL', rtrim(getenv('APP_URL') ?: $scheme.'://'.($_SERVER['HTTP_HOST'] ?? 'visitci-production.up.railway.app'), '/'));
+define('LOG_FILE', sys_get_temp_dir() . '/visitci_webhook.log');
 
-define('APP_URL', getenv('APP_URL') ?: $scheme.'://'.($_SERVER['HTTP_HOST'] ?? 'visitci-production.up.railway.app'));
-define('LOG_FILE', __DIR__ . '/webhook.log');
-
-function logWebhook($message) {
-    $timestamp = date('Y-m-d H:i:s');
-    $line = "[$timestamp] $message\n";
-    
-    // Essayer d'écrire dans le fichier log
-    $result = @file_put_contents(LOG_FILE, $line, FILE_APPEND | LOCK_EX);
-    
-    // Si ça échoue, utiliser error_log comme fallback
-    if ($result === false) {
-        error_log($line);
-    }
+function wlog(string $msg): void {
+    $line = '['.date('Y-m-d H:i:s').'] '.$msg."\n";
+    @file_put_contents(LOG_FILE, $line, FILE_APPEND | LOCK_EX);
+    error_log($line);
 }
 
-// ── LIRE php://input UNE SEULE FOIS ──
+// ── LIRE INPUT ──────────────────────────────────────────────
 $rawInput = file_get_contents('php://input');
-logWebhook('Webhook reçu - Method: '.$_SERVER['REQUEST_METHOD'].' - Size: '.strlen($rawInput).' bytes - APP_URL: '.APP_URL);
+wlog('Webhook reçu — method:'.$_SERVER['REQUEST_METHOD'].' size:'.strlen($rawInput).' APP_URL:'.APP_URL);
 
-ignore_user_abort(true);
-
-// ── Réponse immédiate à Telegram ──
+// ── Réponse immédiate 200 à Telegram ──────────────────────
 http_response_code(200);
 header('Content-Type: application/json');
 echo json_encode(['ok' => true]);
 flush();
-if (function_exists('fastcgi_finish_request')) {
-    fastcgi_finish_request();
-}
+if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
 
-// ── Traitement du message en arrière-plan ──
+// ── Traitement en arrière-plan ─────────────────────────────
+ignore_user_abort(true);
+
 $update = json_decode($rawInput, true);
-if (!$update) {
-    logWebhook('Erreur JSON: ' . json_last_error_msg());
-    exit;
-}
+if (!$update) { wlog('JSON invalide: '.json_last_error_msg()); exit; }
 
-logWebhook('Update reçu: ' . json_encode($update));
+wlog('Update: '.json_encode($update));
 
-$msg = $update['message'] ?? $update['edited_message'] ?? $update['channel_post'] ?? null;
+// Extraire le message (texte ordinaire, commandes, callback)
+$msg = $update['message'] ?? $update['edited_message'] ?? null;
 if (!$msg && isset($update['callback_query']['message'])) {
     $msg = $update['callback_query']['message'];
 }
-if (!$msg) exit;
-$chatId = $msg['chat']['id'];
-$text   = trim($msg['text'] ?? $msg['caption'] ?? ($update['callback_query']['data'] ?? ''));
-$from   = $msg['from']['first_name'] ?? 'Touriste';
+if (!$msg) { wlog('Pas de message'); exit; }
 
-if (!$text) exit;
+$chatId   = (int)($msg['chat']['id'] ?? 0);
+$text     = trim(
+    $update['callback_query']['data'] ??
+    $msg['text'] ??
+    $msg['caption'] ??
+    ''
+);
+$from     = $msg['from']['first_name'] ?? 'Touriste';
 
-// Appel à notre moteur IA central
-$response = callChatAPI($text, $chatId);
-sendTelegram($chatId, $response);
+if (!$chatId || !$text) { wlog('chatId ou texte vide'); exit; }
 
-// ── FONCTIONS ────────────────────────────────────────────────
+// Commande /start → message de bienvenue
+if ($text === '/start') {
+    $welcome = "Bonjour $from ! 🇨🇮 Je suis *VisitCI*, votre guide touristique IA pour la Côte d'Ivoire.\n\n"
+             . "Je peux vous aider à trouver :\n"
+             . "🍽️ Restaurants & maquis\n"
+             . "🏨 Hôtels & résidences\n"
+             . "🚖 Transports\n"
+             . "🏖️ Plages & sites\n"
+             . "🏥 Pharmacies & urgences\n"
+             . "🏦 Banques & change\n\n"
+             . "Posez-moi votre question en français ou en anglais !";
+    sendTelegram($chatId, $welcome, true);
+    exit;
+}
+
+// Appel IA
+wlog("Traitement message: $text (chatId: $chatId)");
+$reply = callChatAPI($text, $chatId);
+sendTelegram($chatId, $reply);
+wlog('=== Fin traitement ===');
+exit;
+
+// ── FONCTIONS ───────────────────────────────────────────────
 function callChatAPI(string $message, int $chatId): string {
     $payload = json_encode([
         'message'    => $message,
@@ -68,61 +84,84 @@ function callChatAPI(string $message, int $chatId): string {
         'session_id' => 'tg_'.$chatId,
     ]);
 
-    logWebhook("Appel API: $message (chatId: $chatId)");
-    $baseUrl = APP_URL;
-    $ch = curl_init($baseUrl.'/api/chat.php');
+    // Appel interne à api/chat.php
+    $url = APP_URL . '/api/chat.php';
+    wlog("→ Appel: $url");
+
+    $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST           => true,
         CURLOPT_POSTFIELDS     => $payload,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_TIMEOUT        => 25,
+        CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_FOLLOWLOCATION => true,
     ]);
-    $res  = curl_exec($ch);
+
+    $res      = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if ($res === false) {
-        logWebhook('Chat API cURL error: '.curl_error($ch));
-        curl_close($ch);
-        return "Désolé, une erreur s'est produite. Réessayez.";
-    }
-    logWebhook("Chat API HTTP $httpCode: $res");
+    $curlErr  = curl_error($ch);
     curl_close($ch);
+
+    if ($res === false || $curlErr) {
+        wlog("cURL error: $curlErr");
+        return "⚠️ Désolé, je ne peux pas accéder à ma base de données en ce moment. Réessayez dans un instant.";
+    }
+
+    wlog("Réponse API HTTP $httpCode: $res");
+
     $data = json_decode($res, true);
-    return $data['reply'] ?? "Désolé, une erreur s'est produite. Réessayez.";
-}
-
-function sendTelegram(int $chatId, string $text): void {
-    logWebhook("Envoi message: $text (chatId: $chatId)");
-    $payload = http_build_query([
-        'chat_id'    => $chatId,
-        'text'       => $text,
-        'disable_web_page_preview' => true,
-    ]);
-    $ch = curl_init('https://api.telegram.org/bot'.TELEGRAM_TOKEN.'/sendMessage');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => $payload,
-        CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
-        CURLOPT_TIMEOUT        => 10,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_SSL_VERIFYHOST => 2,
-    ]);
-    $res = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if ($res === false) {
-        logWebhook('Telegram sendMessage cURL error: '.curl_error($ch));
-    } elseif ($httpCode !== 200) {
-        logWebhook('Telegram sendMessage HTTP '.$httpCode.': '.$res);
-    } else {
-        logWebhook('Message envoyé avec succès');
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        wlog("JSON parse error: ".json_last_error_msg()." — réponse: $res");
+        return "⚠️ Erreur interne. Réessayez dans un instant.";
     }
-    curl_close($ch);
+
+    return $data['reply'] ?? "Désolé, je n'ai pas pu traiter votre demande.";
 }
 
-logWebhook('=== Fin traitement ===');
-logWebhook('');
+function sendTelegram(int $chatId, string $text, bool $markdown = false): void {
+    wlog("→ Envoi Telegram à $chatId: ".mb_substr($text, 0, 80).'...');
 
-exit;
+    // Telegram limite à 4096 caractères par message
+    $chunks = mb_str_split($text, 4000);
+    foreach ($chunks as $chunk) {
+        $params = [
+            'chat_id'                  => $chatId,
+            'text'                     => $chunk,
+            'disable_web_page_preview' => true,
+        ];
+        if ($markdown) $params['parse_mode'] = 'Markdown';
+
+        $ch = curl_init('https://api.telegram.org/bot'.TELEGRAM_TOKEN.'/sendMessage');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query($params),
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
+            CURLOPT_TIMEOUT        => 10,
+            CURLOPT_SSL_VERIFYPEER => true,
+        ]);
+
+        $res      = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr  = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlErr) {
+            wlog("Telegram cURL error: $curlErr");
+        } elseif ($httpCode !== 200) {
+            // Retry sans parse_mode si erreur de parsing Markdown
+            if ($markdown) {
+                wlog("Telegram HTTP $httpCode (markdown), retry sans parse_mode");
+                sendTelegram($chatId, $text, false);
+                return;
+            }
+            wlog("Telegram HTTP $httpCode: $res");
+        } else {
+            wlog("Message Telegram envoyé OK");
+        }
+    }
+}
