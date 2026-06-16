@@ -16,6 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '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');
 define('GROQ_MODEL',   'llama-3.3-70b-versatile');
 define('DB_HOST',      getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net');
+define('DB_PORT',      getenv('DB_PORT') ?: '24576'); // Ajout du port spécifié dans votre commande
 define('DB_NAME',      getenv('DB_NAME') ?: 'railway');
 define('DB_USER',      getenv('DB_USER') ?: 'root');
 define('DB_PASS',      getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
@@ -38,17 +39,24 @@ $sessionId   = $body['session_id'] ?? session_id();
 // ── CONNEXION BDD ────────────────────────────────────────────
 function getDB(): ?PDO {
     try {
+        // Ajout de ;port= à la chaîne DSN pour s'aligner sur Railway
         $pdo = new PDO(
-            'mysql:host='.DB_HOST.';dbname='.DB_NAME.';charset=utf8mb4',
-            DB_USER, DB_PASS,
-            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
+            'mysql:host='.DB_HOST.';port='.DB_PORT.';dbname='.DB_NAME.';charset=utf8mb4',
+            DB_USER, 
+            DB_PASS,
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false
+            ]
         );
         return $pdo;
     } catch (PDOException $e) {
+        // Optionnel : vous pouvez ajouter un error_log($e->getMessage()); ici pour le debug sur Railway
         return null;
     }
 }
+
 
 function extractKeywords(string $msg): array {
     $msg = mb_strtolower($msg);
