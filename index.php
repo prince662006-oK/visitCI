@@ -918,14 +918,7 @@ async function sendMessage() {
   document.getElementById('chat-send-btn').disabled = true;
 
   try {
-    // URL absolue pour Railway (évite les problèmes de chemin relatif)
-    const CHAT_API = <?php
-      $__s = (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO']==='https') ? 'https'
-           : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS']!=='off') ? 'https' : 'http');
-      $__base = rtrim(getenv('APP_URL') ?: ($__s.'://'.($_SERVER['HTTP_HOST']??'')), '/');
-      echo json_encode($__base.'/api/chat.php');
-    ?>;
-    const response = await fetch(CHAT_API, {
+    const response = await fetch('/api/chat.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, history: conversationHistory })
@@ -937,7 +930,8 @@ async function sendMessage() {
     conversationHistory.push({ role: 'assistant', content: reply });
   } catch (e) {
     removeTyping();
-    addMessage("Connexion impossible. Vérifiez votre connexion internet.", 'bot');
+    console.error('Erreur fetch:', e);
+    addMessage("❌ Erreur: " + e.message, 'bot');
   }
   document.getElementById('chat-send-btn').disabled = false;
 }
