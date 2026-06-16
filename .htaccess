@@ -1,0 +1,18 @@
+Options -Indexes
+RewriteEngine On
+
+# Force HTTPS uniquement hors environnement local
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)(:\d+)?$ [NC]
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Bloquer accès direct api/ depuis l'extérieur sauf POST
+<FilesMatch "^webhook\.php$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>
+
+# Headers sécurité
+Header always set X-Content-Type-Options nosniff
+Header always set X-Frame-Options DENY
+Header always set X-XSS-Protection "1; mode=block"
