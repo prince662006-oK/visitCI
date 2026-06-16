@@ -1,17 +1,6 @@
 <?php
-// Configuration BDD (à adapter)
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'n8n');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('GROQ_API_KEY', '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');
-
-$telegramBotUrl = getenv('TELEGRAM_BOT_URL') ?: 'https://t.me/VisitCI_bot';
-$whatsappPublicNumber = preg_replace('/\D+/', '', getenv('WA_PUBLIC_NUMBER') ?: '');
-$whatsappMessage = rawurlencode('Bonjour VisitCI, je souhaite une recommandation touristique.');
-$whatsappChatUrl = $whatsappPublicNumber
-  ? 'https://wa.me/'.$whatsappPublicNumber.'?text='.$whatsappMessage
-  : '';
+// index.php — VisitCI
+// Aucune config BDD ici, tout est dans api/chat.php
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -391,30 +380,12 @@ section{position:relative;z-index:1;padding:6rem 2rem}
   gap:1.5rem;margin-top:3rem;
 }
 .canal-card{
-  display:block;
-  width:100%;
-  color:inherit;
-  background:transparent;
-  border:none;
-  font:inherit;
-  appearance:none;
-  text-decoration:none;
-  cursor:pointer;
   border-radius:var(--r);padding:2.5rem 2rem;text-align:center;
   transition:transform .3s,box-shadow .3s;
   opacity:0;transform:translateY(30px);
 }
 .canal-card.visible{animation:cardIn .6s ease forwards}
 .canal-card:hover{transform:translateY(-6px)}
-.canal-card.selected{
-  border-color:var(--gold);
-  box-shadow:0 20px 60px rgba(244,164,38,0.22);
-  transform:translateY(-6px);
-}
-.canal-card:focus-visible{
-  outline:2px solid var(--gold);
-  outline-offset:4px;
-}
 .canal-telegram{
   background:linear-gradient(135deg,rgba(40,167,255,0.12),rgba(40,167,255,0.04));
   border:1px solid rgba(40,167,255,0.25);
@@ -438,6 +409,82 @@ section{position:relative;z-index:1;padding:6rem 2rem}
 .badge-blue{background:rgba(40,167,255,.15);color:#28a7ff}
 .badge-green{background:rgba(37,211,102,.15);color:#25d366}
 .badge-gold{background:rgba(244,164,38,.15);color:var(--gold)}
+
+/* ── CANAL ACTION & RIPPLE ── */
+.canal-card{cursor:pointer;position:relative;overflow:hidden;user-select:none}
+.canal-ripple{
+  position:absolute;inset:0;border-radius:inherit;
+  background:radial-gradient(circle at var(--rx,50%) var(--ry,50%),rgba(255,255,255,0.08) 0%,transparent 65%);
+  opacity:0;transition:opacity .3s;pointer-events:none;
+}
+.canal-card:hover .canal-ripple{opacity:1}
+.canal-card:hover{transform:translateY(-6px);box-shadow:0 24px 60px rgba(0,0,0,0.45)}
+.canal-action{display:flex;align-items:center;justify-content:space-between;margin-top:1.2rem;flex-wrap:wrap;gap:.5rem}
+.canal-btn{
+  font-size:.82rem;font-weight:700;padding:.4rem 1rem;
+  border-radius:50px;cursor:pointer;letter-spacing:.5px;
+  transition:transform .2s,opacity .2s;
+}
+.canal-btn-blue{background:rgba(40,167,255,.18);color:#28a7ff;border:1px solid rgba(40,167,255,.35)}
+.canal-btn-green{background:rgba(37,211,102,.18);color:#25d366;border:1px solid rgba(37,211,102,.35)}
+.canal-btn-gold{background:rgba(244,164,38,.18);color:var(--gold);border:1px solid rgba(244,164,38,.35)}
+.canal-card:hover .canal-btn{transform:translateX(5px)}
+
+/* ── MODAL ── */
+.canal-modal-overlay{
+  position:fixed;inset:0;z-index:999;
+  background:rgba(0,0,0,0);
+  display:flex;align-items:center;justify-content:center;padding:1.5rem;
+  pointer-events:none;transition:background .3s;
+}
+.canal-modal-overlay.open{background:rgba(0,0,0,0.72);pointer-events:all;backdrop-filter:blur(8px)}
+.canal-modal-box{
+  background:var(--card);border:1px solid var(--border);border-radius:24px;
+  padding:2.5rem 2rem;max-width:420px;width:100%;text-align:center;position:relative;
+  transform:translateY(32px) scale(0.94);opacity:0;
+  transition:transform .38s cubic-bezier(.34,1.56,.64,1),opacity .3s;
+  box-shadow:0 40px 120px rgba(0,0,0,0.65);
+}
+.canal-modal-overlay.open .canal-modal-box{transform:translateY(0) scale(1);opacity:1}
+.canal-modal-close{
+  position:absolute;top:1rem;right:1rem;
+  background:rgba(255,255,255,0.05);border:1px solid var(--border);
+  color:var(--muted);width:32px;height:32px;border-radius:50%;
+  cursor:pointer;font-size:.85rem;transition:all .2s;
+  display:flex;align-items:center;justify-content:center;line-height:1;
+}
+.canal-modal-close:hover{background:rgba(255,255,255,0.1);color:var(--white)}
+.modal-icon{font-size:3.5rem;margin-bottom:1rem;line-height:1}
+.modal-title{font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;margin-bottom:.6rem}
+.modal-desc{color:var(--muted);font-size:.9rem;line-height:1.6;margin-bottom:1.5rem}
+.modal-steps{display:flex;flex-direction:column;gap:.6rem;margin-bottom:1.8rem;text-align:left}
+.modal-step{
+  display:flex;align-items:center;gap:.8rem;
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:10px;padding:.6rem .9rem;font-size:.84rem;color:var(--white);
+}
+.modal-step-num{
+  width:22px;height:22px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;
+}
+.step-blue{background:rgba(40,167,255,.25);color:#28a7ff}
+.step-green{background:rgba(37,211,102,.25);color:#25d366}
+.step-gold{background:rgba(244,164,38,.25);color:var(--gold)}
+.modal-cta-btn{
+  display:block;width:100%;padding:.85rem;border-radius:50px;
+  font-weight:700;font-size:1rem;text-decoration:none;
+  transition:transform .2s,filter .2s;margin-bottom:.8rem;
+  border:none;cursor:pointer;text-align:center;
+}
+.cta-blue{background:linear-gradient(135deg,#28a7ff,#0066cc);color:#fff;box-shadow:0 4px 20px rgba(40,167,255,.35)}
+.cta-green{background:linear-gradient(135deg,#25d366,#128c3e);color:#fff;box-shadow:0 4px 20px rgba(37,211,102,.35)}
+.cta-gold{background:linear-gradient(135deg,var(--gold),#e8920a);color:#0A0F1C;box-shadow:0 4px 20px rgba(244,164,38,.35)}
+.modal-cta-btn:hover{transform:translateY(-2px);filter:brightness(1.1)}
+.modal-cancel{
+  background:none;border:none;color:var(--muted);
+  font-size:.85rem;cursor:pointer;padding:.4rem 1rem;transition:color .2s;
+}
+.modal-cancel:hover{color:var(--white)}
 
 /* ── FOOTER ── */
 footer{
@@ -668,30 +715,61 @@ footer{
     <div style="text-align:center;margin-bottom:4rem">
       <div class="section-eyebrow">Partout avec vous</div>
       <h2 class="section-title">Choisissez votre <span>canal préféré</span></h2>
-      <p class="section-sub" style="margin:0 auto;max-width:640px" id="channel-help">Cliquez sur un canal pour le marquer comme préféré. Le choix est mémorisé sur cet appareil.</p>
     </div>
     <div class="canaux-grid">
-      <button type="button" class="canal-card canal-telegram" data-channel="telegram">
+
+      <!-- Telegram -->
+      <div class="canal-card canal-telegram" onclick="openCanal('telegram')" role="button" tabindex="0" aria-label="Ouvrir Telegram">
+        <div class="canal-ripple"></div>
         <span class="canal-icon">✈️</span>
         <div class="canal-name">Telegram</div>
         <div class="canal-desc">Discutez avec notre bot directement depuis Telegram. Rapide, sécurisé et sans publicité.</div>
-        <span class="canal-badge badge-blue">@VisitCI_bot</span>
-      </button>
-      <button type="button" class="canal-card canal-whatsapp" data-channel="whatsapp">
+        <div class="canal-action">
+          <span class="canal-badge badge-blue">@VisitCI_bot</span>
+          <span class="canal-btn canal-btn-blue">Ouvrir ›</span>
+        </div>
+      </div>
+
+      <!-- WhatsApp -->
+      <div class="canal-card canal-whatsapp" onclick="openCanal('whatsapp')" role="button" tabindex="0" aria-label="Ouvrir WhatsApp">
+        <div class="canal-ripple"></div>
         <span class="canal-icon">📱</span>
         <div class="canal-name">WhatsApp</div>
         <div class="canal-desc">Envoyez un message WhatsApp et obtenez des recommandations instantanément.</div>
-        <span class="canal-badge badge-green">WhatsApp Business</span>
-      </button>
-      <button type="button" class="canal-card canal-web" data-channel="web">
+        <div class="canal-action">
+          <span class="canal-badge badge-green">WhatsApp Business</span>
+          <span class="canal-btn canal-btn-green">Ouvrir ›</span>
+        </div>
+      </div>
+
+      <!-- Web -->
+      <div class="canal-card canal-web" onclick="openCanal('web')" role="button" tabindex="0" aria-label="Utiliser le chat web">
+        <div class="canal-ripple"></div>
         <span class="canal-icon">🌐</span>
         <div class="canal-name">Application Web</div>
         <div class="canal-desc">Utilisez directement ce site pour une expérience complète avec cartes et photos.</div>
-        <span class="canal-badge badge-gold">Vous êtes ici</span>
-      </button>
+        <div class="canal-action">
+          <span class="canal-badge badge-gold">Vous êtes ici</span>
+          <span class="canal-btn canal-btn-gold">Commencer ›</span>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
+
+<!-- MODAL CANAL -->
+<div id="canal-modal" class="canal-modal-overlay" onclick="closeModal(event)" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="canal-modal-box">
+    <button class="canal-modal-close" onclick="closeModal()" aria-label="Fermer">✕</button>
+    <div id="modal-icon" class="modal-icon"></div>
+    <h3 id="modal-title" class="modal-title"></h3>
+    <p id="modal-desc" class="modal-desc"></p>
+    <div id="modal-steps" class="modal-steps"></div>
+    <a id="modal-cta" class="modal-cta-btn" href="#" target="_blank" rel="noopener">Continuer</a>
+    <button class="modal-cancel" onclick="closeModal()">Annuler</button>
+  </div>
+</div>
 
 <!-- FOOTER -->
 <footer>
@@ -780,49 +858,6 @@ const observer = new IntersectionObserver((entries) => {
 
 document.querySelectorAll('.feature-card, .cat-card, .canal-card').forEach(el => observer.observe(el));
 
-// ── CANAUX PRÉFÉRÉS ──
-const preferredChannelCards = Array.from(document.querySelectorAll('[data-channel]'));
-const preferredChannelHelp = document.getElementById('channel-help');
-const preferredChannelStorageKey = 'visitciPreferredChannel';
-const channelLinks = {
-  telegram: { label: 'Telegram', action: () => window.open(<?= json_encode($telegramBotUrl) ?>, '_blank', 'noopener,noreferrer') },
-  whatsapp: {
-    label: 'WhatsApp',
-    action: () => {
-      const whatsappUrl = <?= json_encode($whatsappChatUrl) ?>;
-      if (whatsappUrl) {
-        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-        return;
-      }
-      if (preferredChannelHelp) {
-        preferredChannelHelp.textContent = 'WhatsApp n\'est pas encore configuré. Ajoutez WA_PUBLIC_NUMBER dans .env pour activer ce canal.';
-      }
-      document.getElementById('chat-section').scrollIntoView({ behavior: 'smooth' });
-    }
-  },
-  web: { label: 'Application Web', action: () => document.getElementById('chat-section').scrollIntoView({ behavior: 'smooth' }) }
-};
-
-function setPreferredChannel(channel) {
-  const config = channelLinks[channel] || channelLinks.web;
-  localStorage.setItem(preferredChannelStorageKey, channel);
-  preferredChannelCards.forEach(card => card.classList.toggle('selected', card.dataset.channel === channel));
-  if (preferredChannelHelp) {
-    preferredChannelHelp.textContent = 'Canal préféré actuel : ' + config.label + '.';
-  }
-}
-
-preferredChannelCards.forEach(card => {
-  card.addEventListener('click', () => {
-    const channel = card.dataset.channel;
-    setPreferredChannel(channel);
-    channelLinks[channel]?.action();
-  });
-});
-
-const storedChannel = localStorage.getItem(preferredChannelStorageKey);
-setPreferredChannel(channelLinks[storedChannel] ? storedChannel : 'web');
-
 // ── COMPTEURS ANIMÉS ──
 function animateCounter(el) {
   const target = +el.dataset.target;
@@ -883,7 +918,14 @@ async function sendMessage() {
   document.getElementById('chat-send-btn').disabled = true;
 
   try {
-    const response = await fetch('api/chat.php', {
+    // URL absolue pour Railway (évite les problèmes de chemin relatif)
+    const CHAT_API = <?php
+      $__s = (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO']==='https') ? 'https'
+           : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS']!=='off') ? 'https' : 'http');
+      $__base = rtrim(getenv('APP_URL') ?: ($__s.'://'.($_SERVER['HTTP_HOST']??'')), '/');
+      echo json_encode($__base.'/api/chat.php');
+    ?>;
+    const response = await fetch(CHAT_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, history: conversationHistory })
@@ -912,6 +954,130 @@ chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(
 setTimeout(() => {
   addMessage('Vous pouvez aussi cliquer sur une catégorie pour explorer directement 👆', 'bot');
 }, 2000);
+
+// ── RIPPLE EFFECT SUR LES CARTES CANAL ──
+document.querySelectorAll('.canal-card').forEach(card => {
+  card.addEventListener('mousemove', e => {
+    const r = card.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width * 100).toFixed(1);
+    const y = ((e.clientY - r.top)  / r.height * 100).toFixed(1);
+    card.style.setProperty('--rx', x + '%');
+    card.style.setProperty('--ry', y + '%');
+  });
+  card.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
+  });
+});
+
+// ── CANAL CONFIGS ────────────────────────────────────────────
+const CANAL_CONFIG = {
+  telegram: {
+    icon: '✈️',
+    title: 'Ouvrir Telegram',
+    desc: 'Vous allez être redirigé vers notre bot Telegram. Cherchez @VisitCI_bot ou cliquez sur le bouton ci-dessous.',
+    ctaText: 'Ouvrir @VisitCI_bot',
+    ctaClass: 'cta-blue',
+    ctaHref: 'https://t.me/VisitCI_bot',
+    stepClass: 'step-blue',
+    steps: [
+      'Installez Telegram si ce n\'est pas déjà fait',
+      'Cliquez sur "Ouvrir @VisitCI_bot" ci-dessous',
+      'Tapez /start pour commencer la conversation',
+    ],
+  },
+  whatsapp: {
+    icon: '📱',
+    title: 'Ouvrir WhatsApp',
+    desc: 'Démarrez une conversation WhatsApp avec notre assistant IA touristique. Disponible 24h/24.',
+    ctaText: 'Ouvrir WhatsApp',
+    ctaClass: 'cta-green',
+    // Remplacez 22500000000 par votre vrai numéro WhatsApp Business
+    ctaHref: 'https://wa.me/22500000000?text=Bonjour%20VisitCI%2C%20je%20cherche%20des%20infos%20touristiques%20%F0%9F%87%A8%F0%9F%87%AE',
+    stepClass: 'step-green',
+    steps: [
+      'WhatsApp doit être installé sur votre téléphone',
+      'Cliquez sur "Ouvrir WhatsApp" ci-dessous',
+      'Le message de démarrage est pré-rempli, envoyez-le !',
+    ],
+  },
+  web: {
+    icon: '🌐',
+    title: 'Chat sur le site',
+    desc: 'Utilisez le chat intégré directement sur cette page pour poser toutes vos questions touristiques.',
+    ctaText: 'Aller au chat ›',
+    ctaClass: 'cta-gold',
+    ctaHref: '#chat-section',
+    stepClass: 'step-gold',
+    steps: [
+      'Descendez jusqu\'à la section "Assistant IA"',
+      'Tapez votre question dans le champ de saisie',
+      'L\'IA vous répond en moins de 3 secondes !',
+    ],
+  },
+};
+
+function openCanal(type) {
+  const cfg = CANAL_CONFIG[type];
+  if (!cfg) return;
+
+  // Remplir le modal
+  document.getElementById('modal-icon').textContent  = cfg.icon;
+  document.getElementById('modal-title').textContent = cfg.title;
+  document.getElementById('modal-desc').textContent  = cfg.desc;
+
+  // Étapes
+  const stepsEl = document.getElementById('modal-steps');
+  stepsEl.innerHTML = cfg.steps.map((s, i) =>
+    `<div class="modal-step">
+      <span class="modal-step-num ${cfg.stepClass}">${i+1}</span>
+      <span>${s}</span>
+    </div>`
+  ).join('');
+
+  // Bouton CTA
+  const cta = document.getElementById('modal-cta');
+  cta.textContent = cfg.ctaText;
+  cta.className   = 'modal-cta-btn ' + cfg.ctaClass;
+  cta.href        = cfg.ctaHref;
+
+  // Scroll interne (web) vs lien externe
+  if (type === 'web') {
+    cta.removeAttribute('target');
+    cta.onclick = (e) => {
+      e.preventDefault();
+      closeModal();
+      setTimeout(() => {
+        document.getElementById('chat-section').scrollIntoView({ behavior: 'smooth' });
+        setTimeout(() => chatInput.focus(), 600);
+      }, 250);
+    };
+  } else {
+    cta.setAttribute('target', '_blank');
+    cta.onclick = null;
+  }
+
+  // Afficher
+  const overlay = document.getElementById('canal-modal');
+  overlay.setAttribute('aria-hidden', 'false');
+  overlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
+
+  // Fermer avec Escape
+  document.addEventListener('keydown', escapeModal);
+}
+
+function closeModal(event) {
+  if (event && event.target !== document.getElementById('canal-modal')) return;
+  const overlay = document.getElementById('canal-modal');
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', escapeModal);
+}
+
+function escapeModal(e) {
+  if (e.key === 'Escape') closeModal();
+}
 </script>
 </body>
 </html>
