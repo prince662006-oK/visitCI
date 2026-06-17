@@ -1,9 +1,10 @@
 <?php
 // ============================================================
-// api/chat.php — VisitCI — Version avec gestion d'erreurs totale
+//  api/chat.php — VisitCI — Avec fallback recherche web
 // ============================================================
 error_reporting(E_ALL);
-ini_set('display_errors', '0'); // jamais de HTML brut, toujours du JSON
+ini_set('display_errors', '0');
+
 function jsonFatal(string $msg, int $code = 500): void {
     if (!headers_sent()) {
         http_response_code($code);
@@ -21,14 +22,21 @@ register_shutdown_function(function() {
         jsonFatal($e['message']." in ".basename($e['file'])." line ".$e['line']);
     }
 });
+
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
+
 // ── CONFIGS ─────────────────────────────────────────────────
 define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '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');
 define('GROQ_MODEL', 'llama-3.3-70b-versatile');
+
+// Clé optionnelle pour la recherche web (serper.dev a un plan gratuit).
+// Si absente, le fallback web sera simplement désactivé sans planter.
+define('SERPER_API_KEY', getenv('SERPER_API_KEY') ?: '');
+
 $dbUrl = getenv('DATABASE_URL') ?: getenv('MYSQL_URL') ?: getenv('MYSQL_PRIVATE_URL') ?: '';
 if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
     $p = parse_url($dbUrl);
@@ -38,34 +46,22 @@ if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
     define('DB_USER', $p['user'] ?? '');
     define('DB_PASS', $p['pass'] ?? '');
 } else {
-    define('DB_HOST', getenv('MYSQLHOST') ?: getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net');
-    define('DB_PORT', getenv('MYSQLPORT') ?: getenv('DB_PORT') ?: '3306');
+    define('DB_HOST', getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'mysql-oykn.railway.internal');
+    define('DB_PORT', getenv('MYSQLPORT')     ?: getenv('DB_PORT') ?: '3306');
     define('DB_NAME', getenv('MYSQLDATABASE') ?: getenv('DB_NAME') ?: 'railway');
-    define('DB_USER', getenv('MYSQLUSER') ?: getenv('DB_USER') ?: 'root');
+    define('DB_USER', getenv('MYSQLUSER')     ?: getenv('DB_USER') ?: 'root');
     define('DB_PASS', getenv('MYSQLPASSWORD') ?: getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
 }
-// ── MODE DIAGNOSTIC : GET = test complet étape par étape ──
+
+// ── MODE DIAGNOSTIC (GET) ────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $diag = ['php_version' => PHP_VERSION];
-    $diag['ext_pdo'] = extension_loaded('pdo');
     $diag['ext_pdo_mysql'] = extension_loaded('pdo_mysql');
-    $diag['ext_curl'] = extension_loaded('curl');
-    $diag['ext_mbstring'] = extension_loaded('mbstring');
     $diag['db_host'] = DB_HOST;
-    $diag['db_port'] = DB_PORT;
-    $diag['db_name'] = DB_NAME;
-    $diag['db_user'] = DB_USER;
-    if (!$diag['ext_pdo_mysql']) {
-        $diag['bdd'] = 'ERREUR : extension pdo_mysql absente sur ce serveur PHP';
-        echo json_encode($diag, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        exit;
-    }
+    $diag['web_search_enabled'] = SERPER_API_KEY ? true : false;
     try {
-        $pdo = new PDO(
-            'mysql:host='.DB_HOST.';port='.DB_PORT.';dbname='.DB_NAME.';charset=utf8mb4',
-            DB_USER, DB_PASS,
-            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]
-        );
+        $pdo = new PDO('mysql:host='.DB_HOST.';port='.DB_PORT.';dbname='.DB_NAME.';charset=utf8mb4', DB_USER, DB_PASS,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]);
         $diag['bdd'] = 'CONNECTÉE ✅';
         $diag['lieux_count'] = (int) $pdo->query('SELECT COUNT(*) FROM lieu')->fetchColumn();
     } catch (Throwable $e) {
@@ -75,18 +71,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode($diag, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     exit;
 }
+
 // ── LECTURE BODY (POST) ──────────────────────────────────────
-$raw = file_get_contents('php://input');
+$raw  = file_get_contents('php://input');
 $body = json_decode($raw, true);
 if (!$body || empty($body['message'])) {
     http_response_code(400);
     echo json_encode(['error' => 'Message manquant', 'recu' => $raw]);
     exit;
 }
+
 $userMessage = trim(htmlspecialchars_decode($body['message']));
-$history = isset($body['history']) ? array_slice($body['history'], -10) : [];
-$canal = $body['canal'] ?? 'web';
-$sessionId = $body['session_id'] ?? ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+$history     = isset($body['history']) ? array_slice($body['history'], -10) : [];
+$canal       = $body['canal'] ?? 'web';
+$sessionId   = $body['session_id'] ?? ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+
 // ── CONNEXION BDD ────────────────────────────────────────────
 function getDB(): ?PDO {
     try {
@@ -103,20 +102,22 @@ function getDB(): ?PDO {
         return null;
     }
 }
+
 // ── MOTS-CLÉS ────────────────────────────────────────────────
 function extractKeywords(string $msg): array {
     $msg = mb_strtolower($msg);
     $types = [
         'restaurant' => ['restaurant','maquis','manger','dîner','déjeuner','bouffe','cuisine','plat','attiéké','alloco','foutou','nourriture','faim'],
-        'hotel' => ['hôtel','hotel','résidence','residence','hébergement','chambre','dormir','nuit','séjour','auberge','logement'],
-        'activite' => ['activité','loisir','sortir','boîte','club','bar','musée','concert','sport','gym','spa','visiter','divertissement'],
-        'transport' => ['transport','taxi','woro','gbaka','bus','moto','voiture','aller','trajet','bateau','lagune','ferry'],
-        'plage' => ['plage','mer','sable','bain','nager','surf','site','monument','patrimoine','nature'],
-        'sante' => ['pharmacie','médecin','hôpital','clinique','urgence','santé','docteur','médicament','soins','malade'],
-        'banque' => ['banque','atm','distributeur','argent','change','mobile money','orange money','wave','retrait'],
-        'marche' => ['marché','shopping','acheter','souvenir','artisanat','boutique','centre commercial','tissu'],
+        'hotel'      => ['hôtel','hotel','résidence','residence','hébergement','chambre','dormir','nuit','séjour','auberge','logement'],
+        'activite'   => ['activité','loisir','sortir','boîte','club','bar','musée','concert','sport','gym','spa','visiter','divertissement'],
+        'transport'  => ['transport','taxi','woro','gbaka','bus','moto','voiture','aller','trajet','bateau','lagune','ferry'],
+        'plage'      => ['plage','mer','sable','bain','nager','surf','site','monument','patrimoine','nature'],
+        'sante'      => ['pharmacie','médecin','hôpital','clinique','urgence','santé','docteur','médicament','soins','malade'],
+        'banque'     => ['banque','atm','distributeur','argent','change','mobile money','orange money','wave','retrait'],
+        'marche'     => ['marché','shopping','acheter','souvenir','artisanat','boutique','centre commercial','tissu'],
     ];
     $quartiers = ['cocody','plateau','marcory','yopougon','adjamé','treichville','abobo','koumassi','riviera','deux plateaux','angré','bingerville'];
+
     $found_types = [];
     $found_quartiers = [];
     foreach ($types as $type => $keywords) {
@@ -132,13 +133,14 @@ function extractKeywords(string $msg): array {
         $budget = (int) preg_replace('/\s+/', '', $m[1]);
     }
     return [
-        'types' => array_unique($found_types),
+        'types'     => array_unique($found_types),
         'quartiers' => $found_quartiers,
-        'budget' => $budget,
-        'open_now' => str_contains($msg,'ouvert') || str_contains($msg,'nuit') || str_contains($msg,'24h'),
-        'raw' => $msg,
+        'budget'    => $budget,
+        'open_now'  => str_contains($msg,'ouvert') || str_contains($msg,'nuit') || str_contains($msg,'24h'),
+        'raw'       => $msg,
     ];
 }
+
 // ── RECHERCHE BDD ────────────────────────────────────────────
 function searchPlaces(PDO $pdo, array $kw): array {
     $conditions = ['l.actif = 1'];
@@ -188,43 +190,83 @@ function searchPlaces(PDO $pdo, array $kw): array {
         } catch (Throwable $e2) { return []; }
     }
 }
-// ── CONTEXTE ─────────────────────────────────────────────────
+
+// ── CONTEXTE BDD ─────────────────────────────────────────────
 function formatContext(array $places): string {
-    if (empty($places)) return "Aucun lieu trouvé pour cette recherche.";
-    $lines = ["Lieux disponibles :\n"];
+    if (empty($places)) return "Aucun lieu trouvé dans la base de données vérifiée pour cette recherche.";
+    $lines = ["Lieux disponibles (base de données vérifiée VisitCI) :\n"];
     foreach ($places as $i => $p) {
         $lines[] = ($i+1).". {$p['nom']} ({$p['type']}) — ".($p['quartier']??'').", ".($p['ville']??'Abidjan');
-        if (!empty($p['categories'])) $lines[] = " Catégories: {$p['categories']}";
-        if ($p['note_moyenne'] > 0) $lines[] = " Note: {$p['note_moyenne']}/5 ({$p['nb_avis']} avis)";
-        if (!empty($p['prix_min'])) $lines[] = " Prix: ".number_format($p['prix_min'],0,',',' ')." – ".number_format($p['prix_max']??$p['prix_min'],0,',',' ')." ".($p['devise']??'XOF');
-        if (!empty($p['telephone'])) $lines[] = " Tél: {$p['telephone']}";
-        if (!empty($p['description'])) $lines[] = " ".mb_substr($p['description'],0,120)."...";
+        if (!empty($p['categories']))  $lines[] = "   Catégories: {$p['categories']}";
+        if ($p['note_moyenne'] > 0)    $lines[] = "   Note: {$p['note_moyenne']}/5 ({$p['nb_avis']} avis)";
+        if (!empty($p['prix_min']))    $lines[] = "   Prix: ".number_format($p['prix_min'],0,',',' ')." – ".number_format($p['prix_max']??$p['prix_min'],0,',',' ')." ".($p['devise']??'XOF');
+        if (!empty($p['telephone']))   $lines[] = "   Tél: {$p['telephone']}";
+        if (!empty($p['description'])) $lines[] = "   ".mb_substr($p['description'],0,120)."...";
         $lines[] = '';
     }
     return implode("\n", $lines);
 }
-// ── GROQ ─────────────────────────────────────────────────────
-function callGroq(array $messages): string {
-    $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
+
+// ── RECHERCHE WEB (fallback, via Serper.dev) ─────────────────
+function searchWeb(string $query): string {
+    if (!SERPER_API_KEY) {
+        return "Recherche web non configurée (clé API absente).";
+    }
+    $ch = curl_init('https://google.serper.dev/search');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode(['model'=>GROQ_MODEL,'max_tokens'=>800,'temperature'=>0.7,'messages'=>$messages]),
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json','Authorization: Bearer '.GROQ_API_KEY],
-        CURLOPT_TIMEOUT => 20,
-        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode(['q' => $query.' Abidjan Côte d\'Ivoire', 'num' => 5]),
+        CURLOPT_HTTPHEADER     => [
+            'X-API-KEY: '.SERPER_API_KEY,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_TIMEOUT        => 10,
     ]);
-    $res = curl_exec($ch);
+    $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
     curl_close($ch);
-    if ($err || $code !== 200) {
-        error_log('[VisitCI GROQ] code='.$code.' err='.$err.' res='.$res);
-        return "Je rencontre une difficulté technique (Groq HTTP $code). Veuillez réessayer.";
+
+    if ($code !== 200 || !$res) {
+        error_log('[VisitCI WEBSEARCH] code='.$code);
+        return "Recherche web indisponible pour le moment.";
     }
+
     $data = json_decode($res, true);
-    return $data['choices'][0]['message']['content'] ?? "Pas de réponse générée.";
+    $results = $data['organic'] ?? [];
+    if (empty($results)) return "Aucun résultat web trouvé.";
+
+    $lines = ["Résultats de recherche web (source externe, à vérifier) :\n"];
+    foreach (array_slice($results, 0, 5) as $i => $r) {
+        $lines[] = ($i+1).". ".($r['title'] ?? '')."";
+        if (!empty($r['snippet'])) $lines[] = "   ".$r['snippet'];
+        if (!empty($r['link']))    $lines[] = "   Source: ".$r['link'];
+        $lines[] = '';
+    }
+    return implode("\n", $lines);
 }
+
+// ── DÉFINITION DE L'OUTIL POUR GROQ (tool calling) ───────────
+function getToolsDefinition(): array {
+    return [[
+        'type' => 'function',
+        'function' => [
+            'name' => 'search_web',
+            'description' => 'Recherche des informations sur internet quand la base de données vérifiée VisitCI ne contient pas le lieu demandé. À utiliser UNIQUEMENT si aucun résultat pertinent n\'est trouvé dans les données fournies.',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'query' => [
+                        'type' => 'string',
+                        'description' => 'La requête de recherche, ex: "restaurant libanais Cocody Abidjan"',
+                    ],
+                ],
+                'required' => ['query'],
+            ],
+        ],
+    ]];
+}
+
 // ── SAUVEGARDE ───────────────────────────────────────────────
 function saveConv(PDO $pdo, string $canal, string $uid, string $q, string $a): void {
     try {
@@ -237,16 +279,130 @@ function saveConv(PDO $pdo, string $canal, string $uid, string $q, string $a): v
         }
     } catch (Throwable $e) { error_log('[VisitCI CONV] '.$e->getMessage()); }
 }
-// ── ORCHESTRATION ────────────────────────────────────────────
-$pdo = getDB();
-$kw = extractKeywords($userMessage);
-$places = $pdo ? searchPlaces($pdo, $kw) : [];
-$ctx = formatContext($places);
-$msgs = [['role'=>'system','content'=>"Tu es VisitCI, assistant touristique IA de la Côte d'Ivoire. Tu es chaleureux et précis. Tu parles en français sauf si l'utilisateur parle une autre langue.\n\nRÈGLES:\n- Utilise les données ci-dessous pour recommander et Si tu ne trouves pas ces données dans la base de données pour répondre aux questions. Tu peux utiliser ta propres connaissance pour répondre c'est à dire chercher en ligne des lieux\n- Cite toujours nom, quartier, téléphone et prix si disponibles\n- Sois concis (3-5 phrases max)\n- Ne fabrique JAMAIS d'informations absentes des données\n\nDONNÉES:\n$ctx"]];
-foreach ($history as $h) {
-    if (in_array($h['role']??'', ['user','assistant'])) $msgs[] = ['role'=>$h['role'],'content'=>$h['content']];
+
+// ── APPEL GROQ AVEC SUPPORT TOOL CALLING ─────────────────────
+function callGroqWithTools(array $messages): string {
+    $tools = SERPER_API_KEY ? getToolsDefinition() : null;
+
+    $payload = [
+        'model'       => GROQ_MODEL,
+        'max_tokens'  => 800,
+        'temperature' => 0.7,
+        'messages'    => $messages,
+    ];
+    if ($tools) {
+        $payload['tools'] = $tools;
+        $payload['tool_choice'] = 'auto';
+    }
+
+    $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Authorization: Bearer '.GROQ_API_KEY],
+        CURLOPT_TIMEOUT        => 20,
+    ]);
+    $res  = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+
+    if ($err || $code !== 200) {
+        error_log('[VisitCI GROQ] code='.$code.' err='.$err.' res='.$res);
+        return "Je rencontre une difficulté technique (Groq HTTP $code). Veuillez réessayer.";
+    }
+
+    $data = json_decode($res, true);
+    $choice = $data['choices'][0] ?? null;
+    if (!$choice) return "Pas de réponse générée.";
+
+    $message = $choice['message'] ?? [];
+
+    // L'IA veut utiliser l'outil de recherche web
+    if (!empty($message['tool_calls'])) {
+        $toolCall = $message['tool_calls'][0];
+        $args = json_decode($toolCall['function']['arguments'] ?? '{}', true);
+        $query = $args['query'] ?? '';
+
+        error_log('[VisitCI] IA demande recherche web: '.$query);
+        $webResult = searchWeb($query);
+
+        // On renvoie le résultat de l'outil à Groq pour qu'il formule la réponse finale
+        $messages[] = $message; // le message assistant avec tool_calls
+        $messages[] = [
+            'role'         => 'tool',
+            'tool_call_id' => $toolCall['id'],
+            'content'      => $webResult,
+        ];
+
+        return callGroqFinal($messages);
+    }
+
+    return $message['content'] ?? "Pas de réponse générée.";
 }
-$msgs[] = ['role'=>'user','content'=>$userMessage];
-$reply = callGroq($msgs);
+
+// Second appel sans tools, pour obtenir la réponse finale après résultat d'outil
+function callGroqFinal(array $messages): string {
+    $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode([
+            'model' => GROQ_MODEL, 'max_tokens' => 800, 'temperature' => 0.7, 'messages' => $messages,
+        ]),
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Authorization: Bearer '.GROQ_API_KEY],
+        CURLOPT_TIMEOUT        => 20,
+    ]);
+    $res  = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200) return "Je rencontre une difficulté technique. Réessayez.";
+    $data = json_decode($res, true);
+    return $data['choices'][0]['message']['content'] ?? "Pas de réponse générée.";
+}
+
+// ── PROMPT SYSTÈME ───────────────────────────────────────────
+function buildSystemPrompt(string $ctx): string {
+    $webNote = SERPER_API_KEY
+        ? "Si aucun lieu pertinent n'est trouvé dans les données VisitCI ci-dessous, tu PEUX utiliser l'outil search_web pour chercher en ligne. Dans ce cas, précise clairement au touriste que cette information vient d'une recherche internet et n'est pas vérifiée par VisitCI, et invite-le à vérifier les détails (horaires, prix) avant de s'y rendre."
+        : "Utilise UNIQUEMENT les données ci-dessous. Si rien n'est trouvé, dis-le honnêtement sans inventer de lieu.";
+
+    return <<<PROMPT
+Tu es VisitCI, assistant touristique IA de la Côte d'Ivoire. Tu es chaleureux et précis. Tu parles en français sauf si l'utilisateur parle une autre langue.
+
+RÈGLES:
+- Cite toujours nom, quartier, téléphone et prix si disponibles
+- Sois concis (3-5 phrases max)
+- Ne fabrique JAMAIS d'informations — ni depuis les données VisitCI, ni depuis le web
+- $webNote
+
+DONNÉES VISITCI:
+$ctx
+PROMPT;
+}
+
+// ── ORCHESTRATION ────────────────────────────────────────────
+$pdo    = getDB();
+$kw     = extractKeywords($userMessage);
+$places = $pdo ? searchPlaces($pdo, $kw) : [];
+$ctx    = formatContext($places);
+
+$msgs = [['role' => 'system', 'content' => buildSystemPrompt($ctx)]];
+foreach ($history as $h) {
+    if (in_array($h['role'] ?? '', ['user', 'assistant'])) {
+        $msgs[] = ['role' => $h['role'], 'content' => $h['content']];
+    }
+}
+$msgs[] = ['role' => 'user', 'content' => $userMessage];
+
+$reply = callGroqWithTools($msgs);
+
 if ($pdo) saveConv($pdo, $canal, $sessionId, $userMessage, $reply);
-echo json_encode(['reply'=>$reply,'places_found'=>count($places),'bdd'=>$pdo?'ok':'erreur'], JSON_UNESCAPED_UNICODE);
+
+echo json_encode([
+    'reply'        => $reply,
+    'places_found' => count($places),
+    'bdd'          => $pdo ? 'ok' : 'erreur',
+    'web_search'   => SERPER_API_KEY ? 'activée' : 'désactivée',
+], JSON_UNESCAPED_UNICODE);
