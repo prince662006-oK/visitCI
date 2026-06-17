@@ -10,3 +10,18 @@ COPY . /app
 # Railway fournit la variable $PORT dynamiquement
 EXPOSE 8080
 CMD php -S 0.0.0.0:${PORT:-8080} -t /app
+FROM php:8.4-cli
+
+# Installation des dépendances système + extensions PHP
+RUN apt-get update && apt-get install -y \
+    libonig-dev \
+    libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && docker-php-ext-install -j$(nproc) pdo pdo_mysql mbstring curl \
+    && docker-php-ext-enable pdo pdo_mysql mbstring curl
+
+WORKDIR /app
+COPY . /app
+
+EXPOSE 8080
+CMD php -S 0.0.0.0:${PORT:-8080} -t /app
