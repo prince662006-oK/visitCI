@@ -86,7 +86,7 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
         $dbName = ltrim($p['path'] ?? '', '/'); $dbUser = $p['user'] ?? ''; $dbPass = $p['pass'] ?? '';
     } else {
         $dbHost = getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net';
-        $dbPort = getenv('MYSQLPORT')     ?: getenv('DB_PORT') ?: '24576';
+        $dbPort = getenv('MYSQLPORT')     ?: getenv('DB_PORT') ?: '3306';
         $dbName = getenv('MYSQLDATABASE') ?: getenv('DB_NAME') ?: 'railway';
         $dbUser = getenv('MYSQLUSER')     ?: getenv('DB_USER') ?: 'root';
         $dbPass = getenv('MYSQLPASSWORD') ?: getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM';
