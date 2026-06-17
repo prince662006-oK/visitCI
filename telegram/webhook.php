@@ -8,7 +8,7 @@ define('TELEGRAM_TOKEN', getenv('TELEGRAM_TOKEN') ?: '8948292036:AAHCOShkRZBXRIW
 $scheme = (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
     ? 'https'
     : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
-define('APP_URL', rtrim(getenv('APP_URL') ?: $scheme.'://'.($_SERVER['HTTP_HOST'] ?? 'visitci-production.up.railway.app'), '/'));
+define('APP_URL', rtrim(getenv('APP_URL') ?: $scheme.'://'.($_SERVER['HTTP_HOST'] ?? https://api.telegram.org/bot8948292036:AAHCOShkRZBXRIWWaGAvZTkim5Cguay_BAQ/getWebhookInfo'), '/'));
 define('LOG_FILE', sys_get_temp_dir() . '/visitci_webhook.log');
 
 function wlog(string $msg): void {
@@ -85,7 +85,7 @@ function callChatAPI(string $message, int $chatId): string {
     ]);
 
     // Appel interne à api/chat.php
-    $url = APP_URL . '/api/chat.php';
+    $url = APP_URL . 'https://visitci-production.up.railway.app/api/chat.php';
     wlog("→ Appel: $url");
 
     $ch = curl_init($url);
