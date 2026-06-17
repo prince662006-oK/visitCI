@@ -1,26 +1,42 @@
 <?php
 // ============================================================
-//  api/chat.php — Version Railway-proof
-//  Place ce fichier dans : api/chat.php
+//  api/chat.php — VisitCI — Version avec gestion d'erreurs totale
 // ============================================================
 
-// Gestion CORS et headers
+error_reporting(E_ALL);
+ini_set('display_errors', '0'); // jamais de HTML brut, toujours du JSON
+
+function jsonFatal(string $msg, int $code = 500): void {
+    if (!headers_sent()) {
+        http_response_code($code);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode(['fatal_error' => true, 'message' => $msg], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    jsonFatal("$errstr in ".basename($errfile)." line $errline");
+});
+
+register_shutdown_function(function() {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        jsonFatal($e['message']." in ".basename($e['file'])." line ".$e['line']);
+    }
+});
+
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Accept');
+header('Access-Control-Allow-Headers: Content-Type');
 
-// OPTIONS preflight
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
 // ── CONFIGS ─────────────────────────────────────────────────
 define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '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');
 define('GROQ_MODEL', 'llama-3.3-70b-versatile');
 
-// Railway DATABASE_URL ou variables séparées
 $dbUrl = getenv('DATABASE_URL') ?: getenv('MYSQL_URL') ?: getenv('MYSQL_PRIVATE_URL') ?: '';
 if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
     $p = parse_url($dbUrl);
@@ -30,43 +46,51 @@ if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
     define('DB_USER', $p['user'] ?? '');
     define('DB_PASS', $p['pass'] ?? '');
 } else {
-    define('DB_HOST', getenv('MYSQLHOST')      ?: getenv('DB_HOST')  ?: 'switchyard.proxy.rlwy.net');
-    define('DB_PORT', getenv('MYSQLPORT')      ?: getenv('DB_PORT')  ?: '24576');
-    define('DB_NAME', getenv('MYSQLDATABASE')  ?: getenv('DB_NAME')  ?: 'railway');
-    define('DB_USER', getenv('MYSQLUSER')      ?: getenv('DB_USER')  ?: 'root');
-    define('DB_PASS', getenv('MYSQLPASSWORD')  ?: getenv('DB_PASS')  ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
+    define('DB_HOST', getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net');
+    define('DB_PORT', getenv('MYSQLPORT')     ?: getenv('DB_PORT') ?: '24576');
+    define('DB_NAME', getenv('MYSQLDATABASE') ?: getenv('DB_NAME') ?: 'railway');
+    define('DB_USER', getenv('MYSQLUSER')     ?: getenv('DB_USER') ?: 'root');
+    define('DB_PASS', getenv('MYSQLPASSWORD') ?: getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM');
 }
 
-// ── DEBUG MODE (GET) ─────────────────────────────────────────
+// ── MODE DIAGNOSTIC : GET = test complet étape par étape ──
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $info = [
-        'status'  => 'VisitCI API OK',
-        'method'  => 'Envoyer POST avec {"message":"..."}',
-        'db_host' => DB_HOST,
-        'db_port' => DB_PORT,
-        'db_name' => DB_NAME,
-        'db_user' => DB_USER,
-    ];
-    // Test connexion BDD
+    $diag = ['php_version' => PHP_VERSION];
+
+    $diag['ext_pdo']       = extension_loaded('pdo');
+    $diag['ext_pdo_mysql'] = extension_loaded('pdo_mysql');
+    $diag['ext_curl']      = extension_loaded('curl');
+    $diag['ext_mbstring']  = extension_loaded('mbstring');
+
+    $diag['db_host'] = DB_HOST;
+    $diag['db_port'] = DB_PORT;
+    $diag['db_name'] = DB_NAME;
+    $diag['db_user'] = DB_USER;
+
+    if (!$diag['ext_pdo_mysql']) {
+        $diag['bdd'] = 'ERREUR : extension pdo_mysql absente sur ce serveur PHP';
+        echo json_encode($diag, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        exit;
+    }
+
     try {
         $pdo = new PDO(
             'mysql:host='.DB_HOST.';port='.DB_PORT.';dbname='.DB_NAME.';charset=utf8mb4',
             DB_USER, DB_PASS,
-            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5,
-             PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false]
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]
         );
-        $count = $pdo->query('SELECT COUNT(*) FROM lieu')->fetchColumn();
-        $info['bdd'] = 'CONNECTÉE ✅';
-        $info['lieux'] = (int)$count;
-    } catch (Exception $e) {
-        $info['bdd'] = 'ERREUR ❌';
-        $info['bdd_erreur'] = $e->getMessage();
+        $diag['bdd'] = 'CONNECTÉE ✅';
+        $diag['lieux_count'] = (int) $pdo->query('SELECT COUNT(*) FROM lieu')->fetchColumn();
+    } catch (Throwable $e) {
+        $diag['bdd'] = 'ERREUR ❌';
+        $diag['bdd_message'] = $e->getMessage();
     }
-    echo json_encode($info, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+    echo json_encode($diag, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     exit;
 }
 
-// ── LECTURE BODY ─────────────────────────────────────────────
+// ── LECTURE BODY (POST) ──────────────────────────────────────
 $raw  = file_get_contents('php://input');
 $body = json_decode($raw, true);
 
@@ -90,10 +114,9 @@ function getDB(): ?PDO {
             [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
              PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
              PDO::ATTR_EMULATE_PREPARES => false,
-             PDO::ATTR_TIMEOUT => 5,
-             PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false]
+             PDO::ATTR_TIMEOUT => 5]
         );
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         error_log('[VisitCI BDD] '.$e->getMessage());
         return null;
     }
@@ -126,7 +149,7 @@ function extractKeywords(string $msg): array {
     }
     $budget = null;
     if (preg_match('/moins de (\d[\d\s]*)\s*(fcfa|xof|f\b|francs?)?/iu', $msg, $m)) {
-        $budget = (int)preg_replace('/\s+/', '', $m[1]);
+        $budget = (int) preg_replace('/\s+/', '', $m[1]);
     }
     return [
         'types'     => array_unique($found_types),
@@ -181,11 +204,11 @@ function searchPlaces(PDO $pdo, array $kw): array {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll();
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         error_log('[VisitCI SQL] '.$e->getMessage());
         try {
             return $pdo->query("SELECT l.*, tl.libelle AS type FROM lieu l JOIN type_lieu tl ON tl.id=l.type_lieu_id WHERE l.actif=1 ORDER BY l.note_moyenne DESC LIMIT 6")->fetchAll();
-        } catch (Exception $e2) { return []; }
+        } catch (Throwable $e2) { return []; }
     }
 }
 
@@ -222,7 +245,7 @@ function callGroq(array $messages): string {
     curl_close($ch);
     if ($err || $code !== 200) {
         error_log('[VisitCI GROQ] code='.$code.' err='.$err.' res='.$res);
-        return "Je rencontre une difficulté technique. Veuillez réessayer.";
+        return "Je rencontre une difficulté technique (Groq HTTP $code). Veuillez réessayer.";
     }
     $data = json_decode($res, true);
     return $data['choices'][0]['message']['content'] ?? "Pas de réponse générée.";
@@ -238,7 +261,7 @@ function saveConv(PDO $pdo, string $canal, string $uid, string $q, string $a): v
             $s->execute([$id,'user',$q]);
             $s->execute([$id,'assistant',$a]);
         }
-    } catch (PDOException $e) { error_log('[VisitCI CONV] '.$e->getMessage()); }
+    } catch (Throwable $e) { error_log('[VisitCI CONV] '.$e->getMessage()); }
 }
 
 // ── ORCHESTRATION ────────────────────────────────────────────
