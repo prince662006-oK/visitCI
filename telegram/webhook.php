@@ -85,7 +85,7 @@ function callChatAPI(string $message, int $chatId): string {
     ]);
 
     // Appel interne à api/chat.php
-    $url = APP_URL . 'https://visitci-production.up.railway.app/api/chat.php';
+    $url = APP_URL . '/api/chat.php';
     wlog("→ Appel: $url");
 
     $ch = curl_init($url);
