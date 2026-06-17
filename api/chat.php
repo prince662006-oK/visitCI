@@ -46,7 +46,7 @@ if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
     define('DB_USER', $p['user'] ?? '');
     define('DB_PASS', $p['pass'] ?? '');
 } else {
-    define('DB_HOST', getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'mysql-oykn.railway.internal"');
+    define('DB_HOST', getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'mysql-oykn.railway.internal');
     define('DB_PORT', getenv('MYSQLPORT')     ?: getenv('DB_PORT') ?: '24576');
     define('DB_NAME', getenv('MYSQLDATABASE') ?: getenv('DB_NAME') ?: 'railway');
     define('DB_USER', getenv('MYSQLUSER')     ?: getenv('DB_USER') ?: 'root');
