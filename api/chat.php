@@ -308,6 +308,14 @@ function callGroqWithTools(array $messages): string {
     $err  = curl_error($ch);
     curl_close($ch);
 
+    // Bug connu : Llama 3.3 sur Groq génère parfois un format de tool call
+    // invalide (<function=...>) qui provoque un 400 tool_use_failed.
+    // Dans ce cas, on retente SANS les tools pour avoir une réponse texte simple.
+    if ($code === 400 && $tools) {
+        error_log('[VisitCI GROQ] 400 avec tools, retry sans tools. res='.$res);
+        return callGroqFinal($messages);
+    }
+
     if ($err || $code !== 200) {
         error_log('[VisitCI GROQ] code='.$code.' err='.$err.' res='.$res);
         return "Je rencontre une difficulté technique (Groq HTTP $code). Veuillez réessayer.";
@@ -321,9 +329,19 @@ function callGroqWithTools(array $messages): string {
 
     // L'IA veut utiliser l'outil de recherche web
     if (!empty($message['tool_calls'])) {
-        $toolCall = $message['tool_calls'][0];
-        $args = json_decode($toolCall['function']['arguments'] ?? '{}', true);
+        $toolCall = $message['tool_calls'][0] ?? null;
+        $rawArgs  = $toolCall['function']['arguments'] ?? '{}';
+        $args     = json_decode($rawArgs, true);
+
+        // Si les arguments ne sont pas un JSON valide (format <function=...> mal formé),
+        // on abandonne le tool calling et on repart sur une réponse texte simple.
+        if (!is_array($args) || empty($toolCall['id'])) {
+            error_log('[VisitCI GROQ] tool_call malformé, fallback sans tools. raw='.$rawArgs);
+            return callGroqFinal($messages);
+        }
+
         $query = $args['query'] ?? '';
+        if (!$query) return callGroqFinal($messages);
 
         error_log('[VisitCI] IA demande recherche web: '.$query);
         $webResult = searchWeb($query);
