@@ -77,7 +77,7 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
 
     $groqKey   = getenv('GROQ_API_KEY') ?: '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';
     $groqModel = 'llama-3.3-70b-versatile';
-    $serperKey = getenv('SERPER_API_KEY') ?: '';
+    $serperKey = getenv('SERPER_API_KEY') ?: '2f20d47a2462fb7c5c3a6f43c0f3356cfcd63164';
 
     $dbUrl = getenv('DATABASE_URL') ?: getenv('MYSQL_URL') ?: getenv('MYSQL_PRIVATE_URL') ?: '';
     if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
