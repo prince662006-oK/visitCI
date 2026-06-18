@@ -35,7 +35,7 @@ define('GROQ_MODEL', 'llama-3.3-70b-versatile');
 
 // Clé optionnelle pour la recherche web (serper.dev a un plan gratuit).
 // Si absente, le fallback web sera simplement désactivé sans planter.
-define('SERPER_API_KEY', getenv('SERPER_API_KEY') ?: '2f20d47a2462fb7c5c3a6f43c0f3356cfcd63164');
+define('SERPER_API_KEY', getenv('SERPER_API_KEY') ?: '');
 
 $dbUrl = getenv('DATABASE_URL') ?: getenv('MYSQL_URL') ?: getenv('MYSQL_PRIVATE_URL') ?: '';
 if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
