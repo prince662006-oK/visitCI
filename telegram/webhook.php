@@ -1,8 +1,8 @@
 <?php
 // ============================================================
-//  telegram/webhook.php — VisitCI Bot Telegram — Version finale v2
-//  Appelle la logique chat.php directement en PHP (pas de cURL interne)
-//  Évite le problème de self-call HTTP qui timeout sur Railway
+//  telegram/webhook.php — VisitCI Bot Telegram — v3
+//  Avec fallback recherche web (Groq tool calling + Serper.dev)
+//  Appel direct en PHP (pas de self-call HTTP, évite les timeouts Railway)
 // ============================================================
 
 define('TELEGRAM_TOKEN', getenv('TELEGRAM_TOKEN') ?: '8948292036:AAHCOShkRZBXRIWWaGAvZTkim5Cguay_BAQ');
@@ -17,7 +17,8 @@ function wlog(string $msg): void {
 // ── GET = logs ────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     header('Content-Type: text/plain; charset=utf-8');
-    echo "Webhook v2 — appel direct (sans cURL self-call)\n\n";
+    echo "Webhook v3 — avec recherche web fallback\n";
+    echo "SERPER_API_KEY configurée: " . (getenv('SERPER_API_KEY') ? 'oui' : 'non') . "\n\n";
     echo "── Derniers logs ──\n";
     if (file_exists($LOG_PATH)) {
         echo implode('', array_slice(file($LOG_PATH), -60));
@@ -63,21 +64,20 @@ if ($text === '/start') {
     exit;
 }
 
-// ── APPEL DIRECT À LA LOGIQUE CHAT (sans HTTP, sans cURL self-call) ──
 $reply = getChatReply($text, 'telegram', 'tg_'.$chatId, []);
 sendTelegram($chatId, $reply);
 wlog('=== Fin traitement ===');
 exit;
 
 // ============================================================
-//  LOGIQUE CHAT INTÉGRÉE (copie de api/chat.php, sans le HTTP layer)
+//  LOGIQUE CHAT INTÉGRÉE (identique à api/chat.php, sans HTTP layer)
 // ============================================================
 function getChatReply(string $userMessage, string $canal, string $sessionId, array $history): string {
     wlog('getChatReply démarré');
 
-    // Config Groq + BDD (identique à chat.php)
-    $groqKey = getenv('GROQ_API_KEY') ?: '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';
+    $groqKey   = getenv('GROQ_API_KEY') ?: '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';
     $groqModel = 'llama-3.3-70b-versatile';
+    $serperKey = getenv('SERPER_API_KEY') ?: '';
 
     $dbUrl = getenv('DATABASE_URL') ?: getenv('MYSQL_URL') ?: getenv('MYSQL_PRIVATE_URL') ?: '';
     if ($dbUrl && strpos($dbUrl, 'mysql') !== false) {
@@ -85,26 +85,25 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
         $dbHost = $p['host'] ?? ''; $dbPort = $p['port'] ?? 3306;
         $dbName = ltrim($p['path'] ?? '', '/'); $dbUser = $p['user'] ?? ''; $dbPass = $p['pass'] ?? '';
     } else {
-        $dbHost = getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'switchyard.proxy.rlwy.net';
+        $dbHost = getenv('MYSQLHOST')     ?: getenv('DB_HOST') ?: 'mysql-oykn.railway.internal';
         $dbPort = getenv('MYSQLPORT')     ?: getenv('DB_PORT') ?: '3306';
         $dbName = getenv('MYSQLDATABASE') ?: getenv('DB_NAME') ?: 'railway';
         $dbUser = getenv('MYSQLUSER')     ?: getenv('DB_USER') ?: 'root';
         $dbPass = getenv('MYSQLPASSWORD') ?: getenv('DB_PASS') ?: 'AqogZmpzTZZrcEYZzYGyGmbWdfPWArhM';
     }
 
+    wlog("BDD config: host=$dbHost port=$dbPort (MYSQLHOST env=".(getenv('MYSQLHOST')?:'absent').")");
+
     $pdo = null;
     try {
-        $pdo = new PDO(
-            "mysql:host=$dbHost;port=$dbPort;dbname=$dbName;charset=utf8mb4",
-            $dbUser, $dbPass,
-            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_TIMEOUT => 5]
-        );
+        $pdo = new PDO("mysql:host=$dbHost;port=$dbPort;dbname=$dbName;charset=utf8mb4", $dbUser, $dbPass,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_TIMEOUT => 5]);
         wlog('BDD connectée OK');
     } catch (Throwable $e) {
         wlog('BDD erreur: '.$e->getMessage());
     }
 
-    // Mots-clés
+    // ── Mots-clés ──
     $msgLower = mb_strtolower($userMessage);
     $types = [
         'restaurant' => ['restaurant','maquis','manger','dîner','déjeuner','bouffe','cuisine','plat','attiéké','alloco','foutou','nourriture','faim'],
@@ -122,7 +121,7 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
     }
     $foundTypes = array_unique($foundTypes);
 
-    // Recherche BDD
+    // ── Recherche BDD ──
     $places = [];
     if ($pdo) {
         try {
@@ -161,10 +160,10 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
         }
     }
 
-    // Contexte
-    $ctx = "Aucun lieu trouvé pour cette recherche.";
+    // ── Contexte ──
+    $ctx = "Aucun lieu trouvé dans la base de données vérifiée pour cette recherche.";
     if (!empty($places)) {
-        $lines = ["Lieux disponibles :\n"];
+        $lines = ["Lieux disponibles (base de données vérifiée VisitCI) :\n"];
         foreach ($places as $i => $p) {
             $lines[] = ($i+1).". {$p['nom']} ({$p['type']}) — ".($p['quartier']??'').", ".($p['ville']??'Abidjan');
             if (!empty($p['categories']))  $lines[] = "   Catégories: {$p['categories']}";
@@ -177,8 +176,12 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
         $ctx = implode("\n", $lines);
     }
 
-    // Appel Groq
-    $sysPrompt = "Tu es VisitCI, assistant touristique IA de la Côte d'Ivoire. Tu es chaleureux et précis. Tu parles en français sauf si l'utilisateur parle une autre langue.\n\nRÈGLES:\n- Utilise UNIQUEMENT les données ci-dessous pour recommander des lieux\n- Cite toujours nom, quartier, téléphone et prix si disponibles\n- Sois concis (3-5 phrases max)\n- Ne fabrique JAMAIS d'informations absentes des données\n\nDONNÉES:\n$ctx";
+    // ── Prompt système ──
+    $webNote = $serperKey
+        ? "Si aucun lieu pertinent n'est trouvé dans les données VisitCI ci-dessous, tu PEUX utiliser l'outil search_web pour chercher en ligne. Dans ce cas, précise clairement au touriste que cette information vient d'une recherche internet et n'est pas vérifiée par VisitCI, et invite-le à vérifier les détails avant de s'y rendre."
+        : "Utilise UNIQUEMENT les données ci-dessous. Si rien n'est trouvé, dis-le honnêtement sans inventer de lieu.";
+
+    $sysPrompt = "Tu es VisitCI, assistant touristique IA de la Côte d'Ivoire. Tu es chaleureux et précis. Tu parles en français sauf si l'utilisateur parle une autre langue.\n\nRÈGLES:\n- Cite toujours nom, quartier, téléphone et prix si disponibles\n- Sois concis (3-5 phrases max)\n- Ne fabrique JAMAIS d'informations — ni depuis les données VisitCI, ni depuis le web\n- $webNote\n\nDONNÉES VISITCI:\n$ctx";
 
     $msgs = [['role'=>'system','content'=>$sysPrompt]];
     foreach ($history as $h) {
@@ -186,28 +189,9 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
     }
     $msgs[] = ['role'=>'user','content'=>$userMessage];
 
-    $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => json_encode(['model'=>$groqModel,'max_tokens'=>800,'temperature'=>0.7,'messages'=>$msgs]),
-        CURLOPT_HTTPHEADER     => ['Content-Type: application/json','Authorization: Bearer '.$groqKey],
-        CURLOPT_TIMEOUT        => 20,
-    ]);
-    $res  = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err  = curl_error($ch);
-    curl_close($ch);
+    $reply = callGroqWithTools($msgs, $groqKey, $groqModel, $serperKey);
 
-    wlog("Groq httpCode=$code err=\"$err\"");
-
-    if ($err || $code !== 200) {
-        return "Je rencontre une difficulté technique (Groq $code). Réessayez.";
-    }
-    $data = json_decode($res, true);
-    $reply = $data['choices'][0]['message']['content'] ?? "Pas de réponse générée.";
-
-    // Sauvegarde conversation (best effort)
+    // ── Sauvegarde conversation (best effort) ──
     if ($pdo) {
         try {
             $pdo->prepare("INSERT INTO conversation (canal,user_id_externe,langue) VALUES (?,?,'fr') ON DUPLICATE KEY UPDATE derniere_activite=CURRENT_TIMESTAMP")->execute([$canal,$sessionId]);
@@ -221,6 +205,120 @@ function getChatReply(string $userMessage, string $canal, string $sessionId, arr
     }
 
     return $reply;
+}
+
+// ── Recherche web (Serper.dev) ──
+function searchWeb(string $query, string $serperKey): string {
+    if (!$serperKey) return "Recherche web non configurée.";
+
+    $ch = curl_init('https://google.serper.dev/search');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode(['q' => $query.' Abidjan Côte d\'Ivoire', 'num' => 5]),
+        CURLOPT_HTTPHEADER     => ['X-API-KEY: '.$serperKey, 'Content-Type: application/json'],
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    $res  = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    wlog("searchWeb query=\"$query\" code=$code");
+
+    if ($code !== 200 || !$res) return "Recherche web indisponible.";
+
+    $data = json_decode($res, true);
+    $results = $data['organic'] ?? [];
+    if (empty($results)) return "Aucun résultat web trouvé.";
+
+    $lines = ["Résultats de recherche web (source externe, à vérifier) :\n"];
+    foreach (array_slice($results, 0, 5) as $i => $r) {
+        $lines[] = ($i+1).". ".($r['title'] ?? '');
+        if (!empty($r['snippet'])) $lines[] = "   ".$r['snippet'];
+        if (!empty($r['link']))    $lines[] = "   Source: ".$r['link'];
+        $lines[] = '';
+    }
+    return implode("\n", $lines);
+}
+
+function getToolsDefinition(): array {
+    return [[
+        'type' => 'function',
+        'function' => [
+            'name' => 'search_web',
+            'description' => 'Recherche des informations sur internet quand la base de données vérifiée VisitCI ne contient pas le lieu demandé. À utiliser UNIQUEMENT si aucun résultat pertinent n\'est trouvé dans les données fournies.',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'query' => ['type' => 'string', 'description' => 'La requête de recherche, ex: "restaurant libanais Cocody Abidjan"'],
+                ],
+                'required' => ['query'],
+            ],
+        ],
+    ]];
+}
+
+function callGroqWithTools(array $messages, string $groqKey, string $groqModel, string $serperKey): string {
+    $tools = $serperKey ? getToolsDefinition() : null;
+
+    $payload = ['model' => $groqModel, 'max_tokens' => 800, 'temperature' => 0.7, 'messages' => $messages];
+    if ($tools) { $payload['tools'] = $tools; $payload['tool_choice'] = 'auto'; }
+
+    $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Authorization: Bearer '.$groqKey],
+        CURLOPT_TIMEOUT        => 20,
+    ]);
+    $res  = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+
+    wlog("Groq httpCode=$code err=\"$err\"");
+
+    if ($err || $code !== 200) return "Je rencontre une difficulté technique (Groq $code). Réessayez.";
+
+    $data = json_decode($res, true);
+    $choice = $data['choices'][0] ?? null;
+    if (!$choice) return "Pas de réponse générée.";
+
+    $message = $choice['message'] ?? [];
+
+    if (!empty($message['tool_calls'])) {
+        $toolCall = $message['tool_calls'][0];
+        $args = json_decode($toolCall['function']['arguments'] ?? '{}', true);
+        $query = $args['query'] ?? '';
+
+        wlog('IA demande recherche web: '.$query);
+        $webResult = searchWeb($query, $serperKey);
+
+        $messages[] = $message;
+        $messages[] = ['role' => 'tool', 'tool_call_id' => $toolCall['id'], 'content' => $webResult];
+
+        return callGroqFinal($messages, $groqKey, $groqModel);
+    }
+
+    return $message['content'] ?? "Pas de réponse générée.";
+}
+
+function callGroqFinal(array $messages, string $groqKey, string $groqModel): string {
+    $ch = curl_init('https://api.groq.com/openai/v1/chat/completions');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode(['model' => $groqModel, 'max_tokens' => 800, 'temperature' => 0.7, 'messages' => $messages]),
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Authorization: Bearer '.$groqKey],
+        CURLOPT_TIMEOUT        => 20,
+    ]);
+    $res  = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200) return "Je rencontre une difficulté technique. Réessayez.";
+    $data = json_decode($res, true);
+    return $data['choices'][0]['message']['content'] ?? "Pas de réponse générée.";
 }
 
 function sendTelegram(int $chatId, string $text): void {
