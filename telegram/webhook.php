@@ -279,6 +279,13 @@ function callGroqWithTools(array $messages, string $groqKey, string $groqModel, 
 
     wlog("Groq httpCode=$code err=\"$err\"");
 
+    // Bug connu Groq/Llama 3.3 : génère parfois un tool call mal formé → 400.
+    // On retente sans tools pour obtenir une réponse texte simple.
+    if ($code === 400 && $tools) {
+        wlog('400 avec tools, retry sans tools. res='.substr((string)$res, 0, 300));
+        return callGroqFinal($messages, $groqKey, $groqModel);
+    }
+
     if ($err || $code !== 200) return "Je rencontre une difficulté technique (Groq $code). Réessayez.";
 
     $data = json_decode($res, true);
@@ -288,9 +295,17 @@ function callGroqWithTools(array $messages, string $groqKey, string $groqModel, 
     $message = $choice['message'] ?? [];
 
     if (!empty($message['tool_calls'])) {
-        $toolCall = $message['tool_calls'][0];
-        $args = json_decode($toolCall['function']['arguments'] ?? '{}', true);
+        $toolCall = $message['tool_calls'][0] ?? null;
+        $rawArgs  = $toolCall['function']['arguments'] ?? '{}';
+        $args     = json_decode($rawArgs, true);
+
+        if (!is_array($args) || empty($toolCall['id'])) {
+            wlog('tool_call malformé, fallback sans tools. raw='.$rawArgs);
+            return callGroqFinal($messages, $groqKey, $groqModel);
+        }
+
         $query = $args['query'] ?? '';
+        if (!$query) return callGroqFinal($messages, $groqKey, $groqModel);
 
         wlog('IA demande recherche web: '.$query);
         $webResult = searchWeb($query, $serperKey);
